@@ -1,83 +1,78 @@
-import pandas as pd
 import streamlit as st
-from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
-from sklearn.compose import ColumnTransformer
+import pandas as pd
+import joblib
 
-# Define preprocessing pipeline
-def preprocess_data(df):
-    numerical_columns = ['Product Price', 'Quantity', 'Total Purchase Amount', 'Customer Age', 'HourSpendOnApp',
-                         'NumberOfDeviceRegistered', 'OrderAmountHikeFromlastYear', 'OrderCount', 'DaySinceLastOrder',
-                         'CashbackAmount', 'Sales', 'Discount', 'Profit', 'Total Spend', 'Items Purchased', 'Average Rating']
+# Load the saved model
+pipeline_best_model = joblib.load('recommender.joblib')
 
-    categorical_columns = ['Product Category', 'Gender', 'Country', 'PreferredLoginDevice', 'PreferedOrderCat', 
-                           'Product ID', 'Sub-Category', 'Product Name', 'Membership Type', 'Satisfaction Level']
+# Load the dataset to get product information
+data = pd.read_csv('cleaned_data.csv')
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('num', StandardScaler(), numerical_columns),
-            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_columns)
-        ]
-    )
+# Define the columns to be used for recommendation input
+input_columns = [
+    'customerid', 'gender', 'age', 'city', 'membershiptype',
+    'itemspurchased', 'dayssincelastpurchase', 'hourspendonapp',
+    'productcategory', 'productprice', 'quantity', 'ordercount',
+    'couponused', 'cashbackamount'
+]
 
-    X = preprocessor.fit_transform(df)
-    return X, preprocessor
+def recommend_products(pipeline, input_df):
+    # Preprocess input data
+    X_input_transformed = pipeline.named_steps['preprocessor'].transform(input_df)
+    if 'svd' in pipeline.named_steps:
+        X_input_transformed = pipeline.named_steps['svd'].transform(X_input_transformed)
+    
+    # Get recommendations
+    distances, indices = pipeline.named_steps['model'].kneighbors(X_input_transformed)
+    return distances, indices
 
-# Function to make recommendations using Linear Regression model
-def make_recommendations(user_data, lr_model, preprocessor, df):
-    user_data_processed = preprocessor.transform(user_data)
-    predicted_purchase_amounts = lr_model.predict(user_data_processed)
-    user_data['Predicted Purchase Amount'] = predicted_purchase_amounts
-    recommended_products = user_data.sort_values(by='Predicted Purchase Amount', ascending=False)
+def app():
+       # User inputs
     
-    # Extract product category of the user
-    user_category = user_data['PreferedOrderCat'].values[0]
+    gender = st.selectbox("Gender", ["Male", "Female"])
+    age = st.number_input("Age", min_value=12, max_value=100, value=25)
+    city = st.text_input("City")
+    membershiptype = st.selectbox("Membership Type", ["Bronze", "Silver", "Gold"])
+   
+    dayssincelastpurchase = st.slider("Days Since Last Purchase", min_value=0, value=0)
+    couponused = st.number_input("Coupon Used", min_value=0.0, value=0.0)
+    productcategory = st.text_input("Product Category")
+    productprice = st.number_input("Product Price", min_value=0.0, value=0.0)
+    quantity = st.number_input("Quantity", min_value=0, value=0)
+    hourspendonapp = st.slider("Hours Spent on App", min_value=0, value=0 )
+    ordercount = st.number_input("Order Count", min_value=0, value=0)
+    itemspurchased = st.slider("Items Purchased", min_value=0, value=0)
     
-    # Filter the DataFrame to include only products in the preferred order category
-    products_in_category = df[df['PreferedOrderCat'] == user_category]['Product Name'].unique()
-    
-    return recommended_products[['Product ID', 'Predicted Purchase Amount']], products_in_category
+    cashbackamount = st.number_input("Cashback Amount", min_value=0.0, value=0.0)
 
-# Streamlit app
-def app(df):
-    st.title("Personalized Product Recommendations")
-    unique_customer_ids = df['Customer ID'].unique()
-    selected_customer_id = st.selectbox("Select Customer ID:", options=unique_customer_ids)
-    selected_customer_data = df[df['Customer ID'] == selected_customer_id]
-    st.subheader("Selected Customer Data:")
-    st.write(selected_customer_data)
-    
-    # Preprocess data
-    X, preprocessor = preprocess_data(df)
-    
-    # Encode target variable
-    le = LabelEncoder()
-    y_encoded = le.fit_transform(df['PreferedOrderCat'])
-    
-    # Train Linear Regression model
-    lr_model = LinearRegression()
-    lr_model.fit(X, y_encoded)
-    
-    if st.button("Generate Recommendations"):
-        # Filter the DataFrame to include only the relevant features for the user
-        user_data = df[df['Customer ID'] == selected_customer_id].copy()
+    # Create input dataframe
+    input_data = {
         
-        # Get the preferred order category for the user
-        user_category = user_data['PreferedOrderCat'].values[0]
-        
-        # Filter the DataFrame to include only products in the preferred order category
-        user_data = df[df['PreferedOrderCat'] == user_category].copy()
-        
-        # Drop the 'Customer ID' column as it's not needed for prediction
-        user_data = user_data.drop('Customer ID', axis=1)
-        
-        # Make recommendations
-        recommended_products, products_in_category = make_recommendations(user_data, lr_model, preprocessor, df)
-        
-        # Display recommended products with their predicted purchase amounts
-        st.subheader("Recommended Products:")
-        st.write(products_in_category)
-        
-       
-        
+        'gender': [gender],
+        'age': [age],
+        'city': [city],
+        'membershiptype': [membershiptype],
+        'itemspurchased': [itemspurchased],
+        'dayssincelastpurchase': [dayssincelastpurchase],
+        'hourspendonapp': [hourspendonapp],
+        'productcategory': [productcategory],
+        'productprice': [productprice],
+        'quantity': [quantity],
+        'ordercount': [ordercount],
+        'couponused': [couponused],
+        'cashbackamount': [cashbackamount]
+    }
+    input_df = pd.DataFrame(input_data)
 
+    if st.button("Get Recommendations"):
+        distances, indices = recommend_products(pipeline_best_model, input_df)
+        
+        # Display recommendations
+        recommended_product_ids = indices[0]
+        recommended_products = data.loc[recommended_product_ids, ['productid', 'description', 'productcategory', 'productprice']]
+        
+        st.write("Recommended Products:")
+        st.write(recommended_products)
+
+if __name__ == "__main__":
+    app()

@@ -1,93 +1,67 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import joblib
+from transformerSegment import FeatureSelector, EncodeCategorical, StandardizeFeatures
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.model_selection import train_test_split
 
-# Preprocess data
-def preprocess_data(df, selected_features):
-    # Define the categorical and numerical columns
-    categorical_columns = [col for col in selected_features if df[col].dtype == 'object']
-    numerical_columns = [col for col in selected_features if df[col].dtype != 'object']
+# Load pipelines
+cleaning_pipeline = joblib.load('data_cleaning_pipeline.pkl')
+segment_pipeline = joblib.load('segment_pipeline.pkl')
 
-    # Preprocessing for numerical data
-    numerical_transformer = StandardScaler()
-
-    # Preprocessing for categorical data
-    categorical_transformer = OneHotEncoder(handle_unknown='ignore')
-
-    # Bundle preprocessing for numerical and categorical data
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('num', numerical_transformer, numerical_columns),
-            ('cat', categorical_transformer, categorical_columns)
-        ])
-
-    # Applying the transformations
-    preprocessed_df = preprocessor.fit_transform(df[selected_features])
-
-    return preprocessed_df
-
-# Perform clustering
-def perform_clustering(df, n_clusters):
-    clustering = KMeans(n_clusters=n_clusters, random_state=42)
-    clusters = clustering.fit_predict(df)
-    return clusters, clustering
-
-def visualize_results(df, clusters, selected_var):
-    st.write("Customer Segmentation Results:")
-    graph_type = st.selectbox('Select graph type', ['Scatter Plot', 'Histogram'])
-
-    if graph_type == 'Scatter Plot':
-        visualize_scatter_plot(df, clusters, selected_var)
-    elif graph_type == 'Histogram':
-        visualize_histogram(df, clusters, selected_var)
-
-def visualize_scatter_plot(df, clusters, selected_var):
-    plt.figure(figsize=(10, 6))
-    col_index = df.columns.get_loc(selected_var)
-    plt.scatter(df[selected_var], clusters, c=clusters, cmap='viridis')
-    plt.xlabel(selected_var)
-    plt.ylabel('Cluster')
-    plt.title('Customer Segmentation - Scatter Plot')
-    st.pyplot(plt)
-
-def visualize_histogram(df, clusters, selected_var):
-    plt.figure(figsize=(15, 8))
-    for i in range(max(clusters) + 1):
-        plt.hist(df.loc[clusters == i, selected_var], bins=30, alpha=0.5, label=f'Cluster {i}')
-    plt.xlabel(selected_var)
-    plt.ylabel('Frequency')
-    plt.title('Customer Segmentation - Histogram')
-    plt.xticks(rotation=45)
-    plt.legend()
-    st.pyplot(plt)
+# Define cluster names
+cluster_names = {
+    0: 'Occasional Discount Shoppers',
+    1: 'Young Active Shoppers',
+    2: 'Satisfied Regular Buyers',
+    3: 'Average Value Customers',
+    4: 'High-Spending Infrequent Buyers',
+    5: 'Discount-Driven Shoppers',
+    6: 'Premium Loyal Customers'
+}
 
 def app(df):
-    st.title("Customer Segmentation App")
     
-    # User selects features for clustering
-    selected_features = st.multiselect(
-        'Select features for clustering', 
-        df.columns.tolist(), 
-        default=df.columns.tolist()
-    )
-    
-    # Preprocess data
-    preprocessed_df = preprocess_data(df, selected_features)
-    
-    # User selects number of clusters
-    n_clusters = st.slider('Number of clusters', 2, 10, 3)
-    
-    # Perform clustering
-    clusters, model = perform_clustering(preprocessed_df, n_clusters)
-    
-    # User selects variable for visualization
-    selected_var = st.selectbox('Select variable for segmentation', df.columns)
-    
-    # Visualize results
-    visualize_results(df, clusters, selected_var)
 
+    if df is not None:
+                
+        try:
+            df_cleaned = cleaning_pipeline.transform(df)
+            # Apply the segmentation pipeline
+            st.subheader("Segmented Data")
+            df_segmented = segment_pipeline.fit_predict(df_cleaned)
+            df_cleaned['Cluster'] = df_segmented
+            df_cleaned['ClusterName'] = df_cleaned['Cluster'].map(cluster_names)
+            st.write(df_cleaned.head())
+
+
+            # Show pie chart for cluster distribution
+            st.subheader("Cluster Distribution")
+            cluster_counts = df_cleaned['ClusterName'].value_counts()
+
+            fig, ax = plt.subplots()
+            ax.pie(cluster_counts, labels=cluster_counts.index, autopct='%1.1f%%', startangle=140)
+            ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+
+            st.pyplot(fig)
+
+            # Let user select a variable for segmentation
+            st.subheader("Select Variable for Segmentation Analysis")
+            variable = st.selectbox('Choose a variable:', df_cleaned.columns)
+
+            # Display customer details for each segment
+            st.subheader("Customer Details by Segment")
+            selected_cluster_name = st.selectbox('Choose a cluster name:', df_cleaned['ClusterName'].unique())
+            selected_cluster = [key for key, value in cluster_names.items() if value == selected_cluster_name][0]
+
+            # Filter the DataFrame for the selected cluster
+            df_cluster = df_cleaned[df_cleaned['Cluster'] == selected_cluster]
+            st.write(df_cluster)
+
+            # Show bar chart for the selected variable
+            st.subheader(f"Distribution of {variable} in Cluster {selected_cluster_name}")
+            st.bar_chart(df_cluster[variable].value_counts())
+
+           
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
